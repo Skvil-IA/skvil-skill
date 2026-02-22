@@ -85,7 +85,8 @@ def scan_all():
             result["source"] = source
 
             # Submit to backend and merge reputation
-            reputation = post_scan(result, config)
+            skill_url = skill_data["frontmatter"].get("skill_url")
+            reputation = post_scan(result, config, skill_url=skill_url)
             if reputation:
                 merge_reputation(result, reputation)
             elif config["api_key"]:

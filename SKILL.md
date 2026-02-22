@@ -8,6 +8,7 @@ description: >-
   Triggers: "scan my skills", "is this skill safe", "check this skill",
   "skvil scan", "skvil check", "verify skills", "security scan".
 compatibility: Requires python3 and git.
+skill_url: "https://github.com/Skvil-IA/skvil-skill"
 metadata:
   author: skvil
   version: "0.3.0"

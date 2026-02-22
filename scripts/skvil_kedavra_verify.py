@@ -85,7 +85,8 @@ def verify_skill(name: str):
     # Submit scan to backend (auto-registers if needed), fall back to public verify
     config = load_config()
     mode = "local"
-    reputation = post_scan(result, config)
+    skill_url = skill_data["frontmatter"].get("skill_url")
+    reputation = post_scan(result, config, skill_url=skill_url)
     if reputation:
         merge_reputation(result, reputation)
         mode = "connected"
