@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey?style=flat-square" alt="platform">
 </p>
 <p align="center">
+  <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/OpenClaw-compatible-22c55e?style=flat-square&logo=github&logoColor=white" alt="OpenClaw compatible"></a>
   <a href="https://skvil.com"><img src="https://img.shields.io/badge/registry-skvil.com-3b82f6?style=flat-square" alt="registry"></a>
   <img src="https://img.shields.io/badge/patterns-30%2B-eab308?style=flat-square" alt="patterns">
   <img src="https://img.shields.io/badge/categories-10-eab308?style=flat-square" alt="categories">
