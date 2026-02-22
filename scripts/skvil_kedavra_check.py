@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import traceback
 
 # Add parent directory to path so lib can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -15,8 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pathlib import Path
 
 from lib.client import get_verify, load_config, merge_reputation, merge_verify, post_scan
-from lib.collector import collect_skill, is_contained
-from lib.formatter import compute_score, format_check_output, format_skill_result, risk_level, to_json
+from lib.collector import collect_skill
+from lib.formatter import format_check_output, format_skill_result, to_json
 from lib.hasher import composite_hash, hash_directory, skvil_kedavra_self_hash
 from lib.patterns import scan_binary_presence, scan_oversized_files, scan_skill
 
@@ -27,35 +26,63 @@ CLONE_TIMEOUT = 30  # seconds
 MAX_REPO_SIZE_MB = 50
 
 
-ALLOWED_HOSTS = {"github.com", "gitlab.com", "bitbucket.org"}
+def parse_monorepo_url(url: str):
+    """Parse a GitHub URL that may point to a subdirectory within a monorepo.
 
+    Returns (clone_url, subdir) where subdir is None for regular repos.
 
-def normalize_url(url: str) -> str:
-    """Normalize a git hosting URL to a clonable HTTPS URL.
-
-    Handles all ALLOWED_HOSTS (H3 fix), not just GitHub.
-    Accepts shorthand (user/repo → github.com), host/user/repo, or full HTTPS URLs.
-    Rejects SSH URLs and non-allowed hosts.
+    Supports:
+      https://github.com/user/repo                                → (clone_url, None)
+      https://github.com/user/repo/tree/main/skill-name           → (clone_url, "skill-name")
+      https://github.com/user/repo/tree/main/a/b                  → (clone_url, "a/b")
+      https://github.com/user/repo/blob/main/skill-name/SKILL.md  → (clone_url, "skill-name")
     """
     url = url.strip().rstrip("/")
 
-    # Handle shorthand: user/repo → default to GitHub
+    # Normalize shorthand and bare github.com URLs first
     if re.match(r"^[a-zA-Z][\w.-]*/[a-zA-Z][\w.-]*$", url):
         url = f"https://github.com/{url}"
-    else:
-        # Handle host/user/repo without https:// prefix (all allowed hosts)
-        for host in ALLOWED_HOSTS:
-            if re.match(rf"^{re.escape(host)}/[a-zA-Z][\w.-]*/[a-zA-Z][\w.-]*/?$", url):
-                url = f"https://{url}"
-                break
+    elif re.match(r"^github\.com/", url):
+        url = f"https://{url}"
 
-    # Ensure .git suffix for cloning (all allowed hosts)
-    for host in ALLOWED_HOSTS:
-        if url.startswith(f"https://{host}/") and not url.endswith(".git"):
-            url = url + ".git"
-            break
+    # Extract /tree/branch/path or /blob/branch/path if present
+    m = re.match(r"^(https://[^/]+/[^/]+/[^/]+)/(?:tree|blob)/[^/]+/(.+)$", url)
+    if m:
+        repo_url = m.group(1)
+        subdir = m.group(2).strip("/")
+        # Strip trailing filename (e.g. SKILL.md, README.md) — keep only the directory
+        parts = subdir.split("/")
+        if "." in parts[-1]:
+            parts = parts[:-1]
+        subdir = "/".join(parts) if parts else None
+        # Validate subdir: no path traversal
+        if subdir and ".." in subdir.split("/"):
+            subdir = None
+        return repo_url, subdir
 
-    return url
+    # Strip /tree/branch or /blob/branch with no subpath (just pointing at a branch)
+    url = re.sub(r"/(?:tree|blob)/[^/]+/?$", "", url)
+
+    return url, None
+
+
+def normalize_url(url: str) -> str:
+    """Normalize a GitHub URL to a clonable HTTPS URL.
+
+    Only accepts HTTPS GitHub URLs or shorthand (user/repo).
+    Rejects SSH URLs and non-GitHub hosts.
+    Strips /tree/branch/path for cloning — use parse_monorepo_url() to get subdirs.
+    """
+    repo_url, _ = parse_monorepo_url(url)
+
+    # Ensure .git suffix for cloning
+    if repo_url.startswith("https://github.com/") and not repo_url.endswith(".git"):
+        repo_url = repo_url + ".git"
+
+    return repo_url
+
+
+ALLOWED_HOSTS = {"github.com", "gitlab.com", "bitbucket.org"}
 
 
 def validate_url(url: str) -> bool:
@@ -80,20 +107,16 @@ def clone_repo(url: str, dest: str) -> bool:
     SECURITY: Disables git hooks to prevent arbitrary code execution
     from malicious repositories during clone.
     """
-    # Create an empty directory as hooks path — cross-platform (M1 fix).
-    # /dev/null does not exist on Windows, so git would silently fall back
-    # to the default hooks path, leaving hooks enabled.
-    hooks_dir = tempfile.mkdtemp(prefix="skvil-nohooks-")
     try:
         # Minimal environment to prevent GIT_CONFIG_*, LD_PRELOAD, etc. from
         # bypassing git safety measures
         clone_env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": os.environ.get("HOME", tempfile.gettempdir()),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": os.environ.get("HOME", "/tmp"),
             "GIT_TEMPLATE_DIR": "",
             "GIT_TERMINAL_PROMPT": "0",
         }
-        for k in ("LANG", "LC_ALL", "LC_CTYPE", "SYSTEMROOT", "COMSPEC"):
+        for k in ("LANG", "LC_ALL", "LC_CTYPE"):
             if k in os.environ:
                 clone_env[k] = os.environ[k]
         result = subprocess.run(
@@ -104,7 +127,7 @@ def clone_repo(url: str, dest: str) -> bool:
                 "1",
                 "--single-branch",
                 "--config",
-                f"core.hooksPath={hooks_dir}",
+                "core.hooksPath=/dev/null",
                 url,
                 dest,
             ],
@@ -126,8 +149,6 @@ def clone_repo(url: str, dest: str) -> bool:
             )
         )
         sys.exit(1)
-    finally:
-        shutil.rmtree(hooks_dir, ignore_errors=True)
 
 
 def find_skill_root(repo_dir: str) -> str:
@@ -136,9 +157,8 @@ def find_skill_root(repo_dir: str) -> str:
     The SKILL.md might be at the root or in a subdirectory.
     Validates that any discovered subdirectory stays within repo_dir to
     prevent symlink-based path traversal (e.g. a subdir symlink pointing outside the tmp clone).
-    Uses is_contained() for cross-platform containment check (M3 fix).
     """
-    repo_root = Path(repo_dir)
+    repo_root = Path(repo_dir).resolve()
 
     # Check root first
     if os.path.exists(os.path.join(repo_dir, "SKILL.md")):
@@ -146,19 +166,26 @@ def find_skill_root(repo_dir: str) -> str:
 
     # Check one level deep — resolve symlinks and validate containment
     for entry in sorted(os.listdir(repo_dir)):
-        subdir = repo_root / entry
+        subdir = Path(repo_dir) / entry
         if subdir.is_dir() and os.path.exists(subdir / "SKILL.md"):
-            if is_contained(subdir, repo_root):
-                return str(subdir.resolve())
+            resolved = subdir.resolve()
+            if str(resolved).startswith(str(repo_root) + os.sep):
+                return str(resolved)
 
     return repo_dir  # Fallback to root even without SKILL.md
 
 
 def check_skill(url: str):
-    """Clone and analyze a skill from a URL."""
-    normalized = normalize_url(url)
+    """Clone and analyze a skill from a URL.
 
-    if not validate_url(normalized):
+    Supports monorepo URLs like github.com/user/repo/tree/main/skill-name —
+    clones the repo root and navigates to the subdirectory for analysis.
+    """
+    # Parse monorepo path before normalizing (normalize strips /tree/...)
+    _, monorepo_subdir = parse_monorepo_url(url)
+    clone_url = normalize_url(url)
+
+    if not validate_url(clone_url):
         print(
             to_json(
                 {
@@ -170,13 +197,21 @@ def check_skill(url: str):
         )
         return
 
+    # Preserve the original URL (with subdir path) for skill_url sent to backend/crucible
+    original_url = url.strip().rstrip("/")
+    if not original_url.startswith("https://"):
+        if re.match(r"^github\.com/", original_url):
+            original_url = f"https://{original_url}"
+        elif re.match(r"^[a-zA-Z][\w.-]*/[a-zA-Z][\w.-]*", original_url):
+            original_url = f"https://github.com/{original_url}"
+
     # Create temp parent, let git create the subdirectory
     tmp_parent = tempfile.mkdtemp(prefix="skvil-check-")
     tmp_dir = os.path.join(tmp_parent, "repo")
 
     try:
         # Clone
-        if not clone_repo(normalized, tmp_dir):
+        if not clone_repo(clone_url, tmp_dir):
             print(
                 to_json(
                     {
@@ -207,8 +242,38 @@ def check_skill(url: str):
             )
             return
 
-        # Find skill root
-        skill_root = find_skill_root(tmp_dir)
+        # Monorepo: navigate to specific subdirectory if URL contained /tree/branch/path
+        if monorepo_subdir:
+            target_dir = os.path.join(tmp_dir, monorepo_subdir)
+            resolved = Path(target_dir).resolve()
+            repo_root = Path(tmp_dir).resolve()
+            # Path traversal check
+            if not str(resolved).startswith(str(repo_root) + os.sep):
+                print(
+                    to_json(
+                        {
+                            "type": "check",
+                            "url": url,
+                            "error": f"Invalid subdirectory path: {monorepo_subdir}",
+                        }
+                    )
+                )
+                return
+            if not resolved.is_dir():
+                print(
+                    to_json(
+                        {
+                            "type": "check",
+                            "url": url,
+                            "error": f"Subdirectory not found in repo: {monorepo_subdir}",
+                        }
+                    )
+                )
+                return
+            skill_root = str(resolved)
+        else:
+            # Standard flow: find SKILL.md at root or one level deep
+            skill_root = find_skill_root(tmp_dir)
 
         # Collect metadata and code
         skill_data = collect_skill(skill_root)
@@ -234,7 +299,7 @@ def check_skill(url: str):
             frontmatter=skill_data["frontmatter"],
         )
 
-        # Check if SKILL.md exists — recompute score with the extra finding (M10 fix)
+        # Check if SKILL.md exists
         has_skill_md = os.path.exists(os.path.join(skill_root, "SKILL.md"))
         if not has_skill_md:
             result["findings"].insert(
@@ -247,12 +312,15 @@ def check_skill(url: str):
                     "line": 0,
                 },
             )
+            from lib.formatter import compute_score, risk_level
+
             result["score"] = compute_score(result["findings"])
             result["risk_level"] = risk_level(result["score"])
 
-        # Submit scan to backend (auto-registers if needed), fall back to public verify
+        # Submit scan to backend — use original URL (with monorepo subdir) as skill_url
+        # so Crucible knows which subdirectory to analyze
         config = load_config()
-        reputation = post_scan(result, config, skill_url=normalized)
+        reputation = post_scan(result, config, skill_url=original_url)
         if reputation:
             merge_reputation(result, reputation)
             mode = "connected"
@@ -268,6 +336,8 @@ def check_skill(url: str):
         print(to_json(output))
 
     except Exception as e:
+        import traceback
+
         traceback.print_exc(file=sys.stderr)
         print(
             to_json(

@@ -11,7 +11,7 @@ compatibility: Requires python3 and git.
 skill_url: "https://github.com/Skvil-IA/skvil-skill"
 metadata:
   author: skvil
-  version: "0.4.0"
+  version: "0.5.0"
   emoji: "\U0001F99E"
   category: security
 allowed-tools: Bash(python3:*) Bash(git:*)
@@ -56,6 +56,14 @@ When the user shares a GitHub URL and asks if a skill is safe:
 ```bash
 python3 <skvil-path>/scripts/skvil_kedavra_check.py "<github-url>"
 ```
+
+**IMPORTANT — pass the full URL exactly as the user shared it.** Do NOT strip
+the URL to the repository root. Monorepo URLs contain subdirectory info that
+skvil needs to scan only the correct skill:
+
+- ✅ `"https://github.com/user/repo/blob/main/my-skill/SKILL.md"` — correct
+- ✅ `"https://github.com/user/repo/tree/main/my-skill"` — correct
+- ❌ `"https://github.com/user/repo"` — scans entire repo, wrong for monorepos
 
 Present the result as a clear recommendation:
 
