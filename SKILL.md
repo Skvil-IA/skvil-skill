@@ -11,7 +11,7 @@ compatibility: Requires python3 and git.
 skill_url: "https://github.com/Skvil-IA/skvil-skill"
 metadata:
   author: skvil
-  version: "0.3.0"
+  version: "0.4.0"
   emoji: "\U0001F99E"
   category: security
 allowed-tools: Bash(python3:*) Bash(git:*)
