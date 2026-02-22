@@ -1,6 +1,7 @@
 """Format scan and check results as structured JSON output."""
 
 import json
+from collections import Counter
 from datetime import datetime, timezone
 
 # Score deductions per severity
@@ -11,11 +12,20 @@ SEVERITY_DEDUCTIONS = {
     "low": 3,
 }
 
+# Category accumulation: when a category has >= this many findings,
+# apply an extra penalty to prevent many low-severity findings from
+# composing into a false "safe" verdict (C1 fix).
+CATEGORY_ACCUMULATION_THRESHOLD = 3
+CATEGORY_ACCUMULATION_PENALTY = 10
+
 
 def compute_score(findings: list, file_count: int = -1) -> int:
     """Compute a safety score (0-100) based on findings.
 
     Starts at 100 and deducts points per finding based on severity.
+    Applies category accumulation penalty: 3+ findings in the same category
+    incur an extra deduction, preventing many individually-low findings
+    from staying in the "safe" zone (C1 fix).
     If file_count is 0 (no code to analyze), caps score at 70.
     Client-side scoring only — backend may adjust with reputation data.
     """
@@ -23,6 +33,14 @@ def compute_score(findings: list, file_count: int = -1) -> int:
     for finding in findings:
         severity = finding.get("severity", "low")
         score -= SEVERITY_DEDUCTIONS.get(severity, 3)
+
+    # Category accumulation penalty (C1 fix): many findings in the same
+    # category signal compound risk even if each is individually low.
+    category_counts = Counter(f.get("category", "") for f in findings)
+    for count in category_counts.values():
+        if count >= CATEGORY_ACCUMULATION_THRESHOLD:
+            score -= CATEGORY_ACCUMULATION_PENALTY
+
     score = max(0, min(100, score))
     # Empty skill with no code shouldn't get a perfect score
     if file_count == 0:

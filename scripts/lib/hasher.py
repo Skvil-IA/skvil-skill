@@ -4,6 +4,8 @@ import hashlib
 import os
 from pathlib import Path
 
+from lib.collector import SKIP_DIRS
+
 
 def hash_file(file_path: str, max_size: int = 50 * 1024 * 1024) -> str:
     """Compute SHA-256 hash of a single file.
@@ -17,11 +19,14 @@ def hash_file(file_path: str, max_size: int = 50 * 1024 * 1024) -> str:
             return None
     except OSError:
         return None
-    sha256 = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha256.update(chunk)
-    return sha256.hexdigest()
+    try:
+        sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+    except (PermissionError, OSError):
+        return None
 
 
 def hash_directory(directory: str, skip_dirs: set = None) -> dict:
@@ -30,7 +35,7 @@ def hash_directory(directory: str, skip_dirs: set = None) -> dict:
     Returns dict mapping relative file paths (forward slashes) to their hashes.
     """
     if skip_dirs is None:
-        skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv"}
+        skip_dirs = SKIP_DIRS
 
     hashes = {}
     root = Path(directory)
@@ -58,7 +63,11 @@ def composite_hash(file_hashes: dict) -> str:
 
     Sorts files alphabetically, concatenates 'path:hash' strings,
     then hashes the result. Deterministic and content-addressable.
+    Returns "empty" if no files were hashed (avoids all empty skills
+    sharing the same sha256-of-empty-string on the backend).
     """
+    if not file_hashes:
+        return "empty"
     sha256 = hashlib.sha256()
     for path in sorted(file_hashes.keys()):
         entry = f"{path}:{file_hashes[path]}\n"
