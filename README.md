@@ -1,5 +1,27 @@
 # 🦞 Skvil — Security Scanner for AI Agent Skills
 
+<p align="center">
+  <a href="https://github.com/Skvil-IA/skvil-skill/releases"><img src="https://img.shields.io/badge/version-0.3.0-22c55e?style=flat-square" alt="version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Skvil-IA/skvil-skill?style=flat-square&color=22c55e" alt="license"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.8%2B-3b82f6?style=flat-square&logo=python&logoColor=white" alt="python"></a>
+  <img src="https://img.shields.io/badge/dependencies-none-22c55e?style=flat-square" alt="zero dependencies">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey?style=flat-square" alt="platform">
+</p>
+<p align="center">
+  <a href="https://skvil.com"><img src="https://img.shields.io/badge/registry-skvil.com-3b82f6?style=flat-square" alt="registry"></a>
+  <img src="https://img.shields.io/badge/patterns-30%2B-eab308?style=flat-square" alt="patterns">
+  <img src="https://img.shields.io/badge/categories-10-eab308?style=flat-square" alt="categories">
+  <img src="https://img.shields.io/badge/reputation-EMA%20network-3b82f6?style=flat-square" alt="reputation">
+  <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-ef4444?style=flat-square" alt="security policy"></a>
+</p>
+<p align="center">
+  <a href="https://github.com/Skvil-IA/skvil-skill/commits/main"><img src="https://img.shields.io/github/last-commit/Skvil-IA/skvil-skill?style=flat-square&color=6b7280" alt="last commit"></a>
+  <a href="https://github.com/Skvil-IA/skvil-skill/issues"><img src="https://img.shields.io/github/issues/Skvil-IA/skvil-skill?style=flat-square&color=6b7280" alt="issues"></a>
+  <a href="https://github.com/Skvil-IA/skvil-skill/stargazers"><img src="https://img.shields.io/github/stars/Skvil-IA/skvil-skill?style=flat-square&color=eab308" alt="stars"></a>
+</p>
+
+---
+
 Skvil is a security scanner built specifically for the AI agent ecosystem.
 It analyzes skills before and after installation, tracks their reputation across
 the global network, and detects tampering at every stage of the skill lifecycle.
