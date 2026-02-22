@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 
 # Add parent directory to path so lib can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -14,8 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pathlib import Path
 
 from lib.client import get_verify, load_config, merge_reputation, merge_verify, post_scan
-from lib.collector import collect_skill
-from lib.formatter import format_check_output, format_skill_result, to_json
+from lib.collector import collect_skill, is_contained
+from lib.formatter import compute_score, format_check_output, format_skill_result, risk_level, to_json
 from lib.hasher import composite_hash, hash_directory, skvil_kedavra_self_hash
 from lib.patterns import scan_binary_presence, scan_oversized_files, scan_skill
 
@@ -26,28 +27,35 @@ CLONE_TIMEOUT = 30  # seconds
 MAX_REPO_SIZE_MB = 50
 
 
-def normalize_url(url: str) -> str:
-    """Normalize a GitHub URL to a clonable HTTPS URL.
+ALLOWED_HOSTS = {"github.com", "gitlab.com", "bitbucket.org"}
 
-    Only accepts HTTPS GitHub URLs or shorthand (user/repo).
-    Rejects SSH URLs and non-GitHub hosts.
+
+def normalize_url(url: str) -> str:
+    """Normalize a git hosting URL to a clonable HTTPS URL.
+
+    Handles all ALLOWED_HOSTS (H3 fix), not just GitHub.
+    Accepts shorthand (user/repo → github.com), host/user/repo, or full HTTPS URLs.
+    Rejects SSH URLs and non-allowed hosts.
     """
     url = url.strip().rstrip("/")
 
-    # Handle shorthand: user/repo (must be alphanumeric with hyphens/dots/underscores)
+    # Handle shorthand: user/repo → default to GitHub
     if re.match(r"^[a-zA-Z][\w.-]*/[a-zA-Z][\w.-]*$", url):
         url = f"https://github.com/{url}"
-    elif re.match(r"^github\.com/[a-zA-Z][\w.-]*/[a-zA-Z][\w.-]*/?$", url):
-        url = f"https://{url}"
+    else:
+        # Handle host/user/repo without https:// prefix (all allowed hosts)
+        for host in ALLOWED_HOSTS:
+            if re.match(rf"^{re.escape(host)}/[a-zA-Z][\w.-]*/[a-zA-Z][\w.-]*/?$", url):
+                url = f"https://{url}"
+                break
 
-    # Ensure .git suffix for cloning
-    if url.startswith("https://github.com/") and not url.endswith(".git"):
-        url = url + ".git"
+    # Ensure .git suffix for cloning (all allowed hosts)
+    for host in ALLOWED_HOSTS:
+        if url.startswith(f"https://{host}/") and not url.endswith(".git"):
+            url = url + ".git"
+            break
 
     return url
-
-
-ALLOWED_HOSTS = {"github.com", "gitlab.com", "bitbucket.org"}
 
 
 def validate_url(url: str) -> bool:
@@ -72,16 +80,20 @@ def clone_repo(url: str, dest: str) -> bool:
     SECURITY: Disables git hooks to prevent arbitrary code execution
     from malicious repositories during clone.
     """
+    # Create an empty directory as hooks path — cross-platform (M1 fix).
+    # /dev/null does not exist on Windows, so git would silently fall back
+    # to the default hooks path, leaving hooks enabled.
+    hooks_dir = tempfile.mkdtemp(prefix="skvil-nohooks-")
     try:
         # Minimal environment to prevent GIT_CONFIG_*, LD_PRELOAD, etc. from
         # bypassing git safety measures
         clone_env = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "HOME": os.environ.get("HOME", "/tmp"),
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", tempfile.gettempdir()),
             "GIT_TEMPLATE_DIR": "",
             "GIT_TERMINAL_PROMPT": "0",
         }
-        for k in ("LANG", "LC_ALL", "LC_CTYPE"):
+        for k in ("LANG", "LC_ALL", "LC_CTYPE", "SYSTEMROOT", "COMSPEC"):
             if k in os.environ:
                 clone_env[k] = os.environ[k]
         result = subprocess.run(
@@ -92,7 +104,7 @@ def clone_repo(url: str, dest: str) -> bool:
                 "1",
                 "--single-branch",
                 "--config",
-                "core.hooksPath=/dev/null",
+                f"core.hooksPath={hooks_dir}",
                 url,
                 dest,
             ],
@@ -114,6 +126,8 @@ def clone_repo(url: str, dest: str) -> bool:
             )
         )
         sys.exit(1)
+    finally:
+        shutil.rmtree(hooks_dir, ignore_errors=True)
 
 
 def find_skill_root(repo_dir: str) -> str:
@@ -122,8 +136,9 @@ def find_skill_root(repo_dir: str) -> str:
     The SKILL.md might be at the root or in a subdirectory.
     Validates that any discovered subdirectory stays within repo_dir to
     prevent symlink-based path traversal (e.g. a subdir symlink pointing outside the tmp clone).
+    Uses is_contained() for cross-platform containment check (M3 fix).
     """
-    repo_root = Path(repo_dir).resolve()
+    repo_root = Path(repo_dir)
 
     # Check root first
     if os.path.exists(os.path.join(repo_dir, "SKILL.md")):
@@ -131,11 +146,10 @@ def find_skill_root(repo_dir: str) -> str:
 
     # Check one level deep — resolve symlinks and validate containment
     for entry in sorted(os.listdir(repo_dir)):
-        subdir = Path(repo_dir) / entry
+        subdir = repo_root / entry
         if subdir.is_dir() and os.path.exists(subdir / "SKILL.md"):
-            resolved = subdir.resolve()
-            if str(resolved).startswith(str(repo_root) + os.sep):
-                return str(resolved)
+            if is_contained(subdir, repo_root):
+                return str(subdir.resolve())
 
     return repo_dir  # Fallback to root even without SKILL.md
 
@@ -220,7 +234,7 @@ def check_skill(url: str):
             frontmatter=skill_data["frontmatter"],
         )
 
-        # Check if SKILL.md exists
+        # Check if SKILL.md exists — recompute score with the extra finding (M10 fix)
         has_skill_md = os.path.exists(os.path.join(skill_root, "SKILL.md"))
         if not has_skill_md:
             result["findings"].insert(
@@ -233,8 +247,6 @@ def check_skill(url: str):
                     "line": 0,
                 },
             )
-            from lib.formatter import compute_score, risk_level
-
             result["score"] = compute_score(result["findings"])
             result["risk_level"] = risk_level(result["score"])
 
@@ -256,8 +268,6 @@ def check_skill(url: str):
         print(to_json(output))
 
     except Exception as e:
-        import traceback
-
         traceback.print_exc(file=sys.stderr)
         print(
             to_json(

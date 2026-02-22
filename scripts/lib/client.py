@@ -5,6 +5,7 @@ import os
 import ssl
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -82,7 +83,10 @@ def load_config():
 
     # Reject non-HTTPS URLs unless explicitly pointing to localhost (local dev).
     # Falls back to DEFAULT_API_URL rather than sending the API key in plaintext.
-    is_localhost = any(h in resolved_url for h in ("localhost", "127.0.0.1", "::1"))
+    # Uses urlparse to check only the hostname — substring matching would allow
+    # bypass via URLs like http://evil.com/localhost (M2 fix).
+    parsed_url = urllib.parse.urlparse(resolved_url)
+    is_localhost = parsed_url.hostname in ("localhost", "127.0.0.1", "::1")
     if not resolved_url.startswith("https://") and not is_localhost:
         print(
             f"[skvil] WARNING: SKVIL_KEDAVRA_API_URL '{resolved_url}' is not HTTPS — "
