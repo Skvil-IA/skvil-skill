@@ -103,7 +103,7 @@ def load_config():
 
 def _request(method, url, api_key, data=None):
     """Make an HTTP request, return parsed JSON or None on failure."""
-    headers = {"Content-Type": "application/json", "User-Agent": "skvil/0.3.0"}
+    headers = {"Content-Type": "application/json", "User-Agent": "skvil/0.4.0"}
     if api_key:
         headers["X-API-Key"] = api_key
 
