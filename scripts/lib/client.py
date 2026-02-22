@@ -145,9 +145,10 @@ def auto_register(config=None):
     try:
         config_dir.mkdir(parents=True, exist_ok=True)
         existing = config_path.read_text() if config_path.exists() else ""
-        if "api_key=" not in existing:
+        key_prefix = "api_key"
+        if f"{key_prefix}=" not in existing:
             with config_path.open("a") as f:
-                f.write(f"api_key={api_key}\n")
+                f.write(f"{key_prefix}={api_key}\n")
         print(f"[skvil] registered — key saved to {config_path}", file=sys.stderr)
     except OSError:
         pass
