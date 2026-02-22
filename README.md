@@ -1,7 +1,7 @@
 # 🦞 Skvil — Security Scanner for AI Agent Skills
 
 <p align="center">
-  <a href="https://github.com/Skvil-IA/skvil-skill/releases"><img src="https://img.shields.io/badge/version-0.3.0-22c55e?style=flat-square" alt="version"></a>
+  <a href="https://github.com/Skvil-IA/skvil-skill/releases"><img src="https://img.shields.io/badge/version-0.4.0-22c55e?style=flat-square" alt="version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Skvil-IA/skvil-skill?style=flat-square&color=22c55e" alt="license"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.8%2B-3b82f6?style=flat-square&logo=python&logoColor=white" alt="python"></a>
   <img src="https://img.shields.io/badge/dependencies-none-22c55e?style=flat-square" alt="zero dependencies">
