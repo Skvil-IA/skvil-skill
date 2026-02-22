@@ -233,7 +233,11 @@ def discover_skills(extra_dirs: list = None) -> list:
                 # Monorepo case: agent installed a full repo, SKILL.md lives in
                 # subdirectories.  Each subdirectory with its own SKILL.md is
                 # treated as a separate skill.
-                for subentry in sorted(entry.iterdir()):
+                try:
+                    sub_iter = sorted(entry.iterdir())
+                except (PermissionError, OSError):
+                    continue
+                for subentry in sub_iter:
                     if subentry.is_dir() and (subentry / "SKILL.md").exists():
                         sub_resolved = str(subentry.resolve())
                         if sub_resolved.startswith(resolved + os.sep) and sub_resolved not in seen:

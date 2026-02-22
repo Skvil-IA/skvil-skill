@@ -26,44 +26,73 @@ def find_skill(name: str) -> str:
     Validates that the resolved path stays within a skills directory
     to prevent path traversal attacks.
 
-    Handles monorepo installs: if the directory has no root SKILL.md,
-    looks one level deep for a subdirectory matching the skill name
-    (or any single subdirectory with SKILL.md).
+    Handles monorepo installs in two ways:
+    1. Direct match: ``search_dir/name`` exists but has no SKILL.md — look
+       one level deep for a subdirectory whose SKILL.md matches.
+    2. Deep match: ``search_dir/*/name`` — the skill lives inside a monorepo
+       directory (e.g. ``~/.openclaw/skills/openclaw-skills/botchan``).
     """
     search_dirs = [
         Path.home() / ".openclaw" / "skills",
         Path.cwd() / "skills",
     ]
 
+    # --- Pass 1: direct name match (search_dir / name) -----------------------
+    for search_dir in search_dirs:
+        try:
+            if not search_dir.exists():
+                continue
+            skill_dir = search_dir / name
+            if not (skill_dir.exists() and skill_dir.is_dir()):
+                continue
+            resolved = skill_dir.resolve()
+            # Ensure resolved path is still under the search directory
+            if not str(resolved).startswith(str(search_dir.resolve()) + os.sep):
+                continue
+
+            # Standard case: SKILL.md at root
+            if (resolved / "SKILL.md").exists():
+                return str(resolved)
+
+            # Monorepo case: look for subdirectory with SKILL.md
+            # Prefer subdirectory matching the skill name
+            skill_subdirs = []
+            for subentry in sorted(resolved.iterdir()):
+                if subentry.is_dir() and (subentry / "SKILL.md").exists():
+                    sub_resolved = subentry.resolve()
+                    if str(sub_resolved).startswith(str(resolved) + os.sep):
+                        if subentry.name == name:
+                            return str(sub_resolved)
+                        skill_subdirs.append(str(sub_resolved))
+
+            # No exact name match — return first alphabetical subdirectory
+            if skill_subdirs:
+                return skill_subdirs[0]
+        except (PermissionError, OSError):
+            continue
+
+    # --- Pass 2: deep match (search_dir / * / name) --------------------------
+    # Covers the case where the user asks for "botchan" but the directory is
+    # search_dir/openclaw-skills/botchan/ (monorepo one level deep).
     for search_dir in search_dirs:
         if not search_dir.exists():
             continue
-        skill_dir = search_dir / name
-        if not (skill_dir.exists() and skill_dir.is_dir()):
+        resolved_search = str(search_dir.resolve())
+        try:
+            entries = sorted(search_dir.iterdir())
+        except (PermissionError, OSError):
             continue
-        resolved = skill_dir.resolve()
-        # Ensure resolved path is still under the search directory
-        if not str(resolved).startswith(str(search_dir.resolve()) + os.sep):
-            continue
-
-        # Standard case: SKILL.md at root
-        if (resolved / "SKILL.md").exists():
-            return str(resolved)
-
-        # Monorepo case: look for subdirectory with SKILL.md
-        # Prefer subdirectory matching the skill name
-        skill_subdirs = []
-        for subentry in sorted(resolved.iterdir()):
-            if subentry.is_dir() and (subentry / "SKILL.md").exists():
-                sub_resolved = subentry.resolve()
-                if str(sub_resolved).startswith(str(resolved) + os.sep):
-                    if subentry.name == name:
-                        return str(sub_resolved)
-                    skill_subdirs.append(str(sub_resolved))
-
-        # No exact name match — return first subdirectory with SKILL.md
-        if skill_subdirs:
-            return skill_subdirs[0]
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            # Skip entries that are a direct name match (already handled above)
+            if entry.name == name:
+                continue
+            sub = entry / name
+            if sub.is_dir() and (sub / "SKILL.md").exists():
+                sub_resolved = str(sub.resolve())
+                if sub_resolved.startswith(resolved_search + os.sep):
+                    return sub_resolved
 
     return None
 
