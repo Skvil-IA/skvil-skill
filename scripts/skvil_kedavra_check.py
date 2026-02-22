@@ -151,8 +151,11 @@ def clone_repo(url: str, dest: str) -> bool:
         sys.exit(1)
 
 
-def find_skill_root(repo_dir: str) -> str:
+def find_skill_root(repo_dir: str):
     """Find the skill root directory within a cloned repo.
+
+    Returns (skill_root, error) where error is a string if the repo is a monorepo
+    with multiple skills and no subdirectory was specified.
 
     The SKILL.md might be at the root or in a subdirectory.
     Validates that any discovered subdirectory stays within repo_dir to
@@ -162,17 +165,31 @@ def find_skill_root(repo_dir: str) -> str:
 
     # Check root first
     if os.path.exists(os.path.join(repo_dir, "SKILL.md")):
-        return repo_dir
+        return repo_dir, None
 
-    # Check one level deep — resolve symlinks and validate containment
+    # Check one level deep — collect ALL subdirectories with SKILL.md
+    skill_dirs = []
     for entry in sorted(os.listdir(repo_dir)):
         subdir = Path(repo_dir) / entry
         if subdir.is_dir() and os.path.exists(subdir / "SKILL.md"):
             resolved = subdir.resolve()
             if str(resolved).startswith(str(repo_root) + os.sep):
-                return str(resolved)
+                skill_dirs.append((entry, str(resolved)))
 
-    return repo_dir  # Fallback to root even without SKILL.md
+    # Monorepo detected — multiple skills, no subdirectory specified
+    if len(skill_dirs) > 1:
+        names = [name for name, _ in skill_dirs]
+        return None, (
+            f"Monorepo detected with {len(skill_dirs)} skills: {', '.join(names)}. "
+            f"Pass the URL to a specific skill (e.g. repo/tree/main/{names[0]}) "
+            f"instead of the repository root."
+        )
+
+    # Single skill found one level deep
+    if len(skill_dirs) == 1:
+        return skill_dirs[0][1], None
+
+    return repo_dir, None  # Fallback to root even without SKILL.md
 
 
 def check_skill(url: str):
@@ -273,7 +290,18 @@ def check_skill(url: str):
             skill_root = str(resolved)
         else:
             # Standard flow: find SKILL.md at root or one level deep
-            skill_root = find_skill_root(tmp_dir)
+            skill_root, monorepo_err = find_skill_root(tmp_dir)
+            if monorepo_err:
+                print(
+                    to_json(
+                        {
+                            "type": "check",
+                            "url": url,
+                            "error": monorepo_err,
+                        }
+                    )
+                )
+                return
 
         # Collect metadata and code
         skill_data = collect_skill(skill_root)
