@@ -4,9 +4,6 @@ import os
 import re
 from pathlib import Path
 
-# Directories to skip during file enumeration — shared with hasher.py convention.
-SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
-
 # Max file size to read (50KB)
 MAX_FILE_SIZE = 50 * 1024
 
@@ -133,15 +130,12 @@ def collect_skill(skill_dir: str) -> dict:
             pass
 
     # Enumerate files and collect code
+    skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv"}
     file_count = 0
-    limit_reached = False
     for dirpath, dirnames, filenames in os.walk(str(skill_path)):
-        if limit_reached:
-            break
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for filename in sorted(filenames):
             if file_count >= MAX_FILE_COUNT:
-                limit_reached = True
                 break
             filepath = Path(dirpath) / filename
 
@@ -182,27 +176,6 @@ def collect_skill(skill_dir: str) -> dict:
     return result
 
 
-def is_contained(child: Path, parent: Path) -> bool:
-    """Check if child path is contained within parent path.
-
-    Uses pathlib's relative_to() for robust cross-platform comparison,
-    avoiding os.sep issues on Windows (M3 fix).
-    """
-    try:
-        child.resolve().relative_to(parent.resolve())
-        return True
-    except ValueError:
-        return False
-
-
-def _has_code_files(directory: Path) -> bool:
-    """Check if a directory contains any code files (non-recursive)."""
-    try:
-        return any(f.suffix.lower() in CODE_EXTENSIONS for f in directory.iterdir() if f.is_file())
-    except (PermissionError, OSError):
-        return False
-
-
 def discover_skills(extra_dirs: list = None) -> list:
     """Discover all installed skill directories.
 
@@ -211,11 +184,7 @@ def discover_skills(extra_dirs: list = None) -> list:
       - ./skills/ (current workspace, source: "local")
       - Any extra directories provided (source: "extra")
 
-    Returns list of dicts: [{"path": str, "source": str, "has_skill_md": bool}, ...]
-
-    Includes directories with SKILL.md (standard skills) AND directories without
-    SKILL.md that contain code files (potentially evasive — H1 fix). The
-    has_skill_md flag lets callers emit a warning for non-standard skills.
+    Returns list of dicts: [{"path": str, "source": str}, ...]
 
     The "source" field distinguishes globally-installed skills from workspace-local
     ones. Local skills (./skills/) come from the current working directory and may
@@ -246,26 +215,29 @@ def discover_skills(extra_dirs: list = None) -> list:
     for search_dir, source in tagged_dirs:
         if not search_dir.is_dir():
             continue
+        resolved_search = str(search_dir.resolve())
         for entry in sorted(search_dir.iterdir()):
             if not entry.is_dir():
                 continue
-            resolved = entry.resolve()
-            # Containment check using cross-platform helper
-            if not is_contained(entry, search_dir):
+            resolved = str(entry.resolve())
+            # Containment check: resolved path must be inside search_dir
+            if not resolved.startswith(resolved_search + os.sep):
                 continue
-            resolved_str = str(resolved)
-            if resolved_str in seen:
-                continue
-            seen.add(resolved_str)
-            has_skill_md = (entry / "SKILL.md").exists()
-            # Include dirs with SKILL.md OR dirs with code files (H1 fix).
-            # Skills without SKILL.md may be evasive — the caller should
-            # emit a finding so the user is aware.
-            if has_skill_md or _has_code_files(entry):
-                skills.append({
-                    "path": resolved_str,
-                    "source": source,
-                    "has_skill_md": has_skill_md,
-                })
+
+            if (entry / "SKILL.md").exists():
+                # Standard case: SKILL.md at root of skill directory
+                if resolved not in seen:
+                    seen.add(resolved)
+                    skills.append({"path": resolved, "source": source})
+            else:
+                # Monorepo case: agent installed a full repo, SKILL.md lives in
+                # subdirectories.  Each subdirectory with its own SKILL.md is
+                # treated as a separate skill.
+                for subentry in sorted(entry.iterdir()):
+                    if subentry.is_dir() and (subentry / "SKILL.md").exists():
+                        sub_resolved = str(subentry.resolve())
+                        if sub_resolved.startswith(resolved + os.sep) and sub_resolved not in seen:
+                            seen.add(sub_resolved)
+                            skills.append({"path": sub_resolved, "source": source})
 
     return skills

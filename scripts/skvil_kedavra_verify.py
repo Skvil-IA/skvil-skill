@@ -25,6 +25,10 @@ def find_skill(name: str) -> str:
 
     Validates that the resolved path stays within a skills directory
     to prevent path traversal attacks.
+
+    Handles monorepo installs: if the directory has no root SKILL.md,
+    looks one level deep for a subdirectory matching the skill name
+    (or any single subdirectory with SKILL.md).
     """
     search_dirs = [
         Path.home() / ".openclaw" / "skills",
@@ -35,11 +39,31 @@ def find_skill(name: str) -> str:
         if not search_dir.exists():
             continue
         skill_dir = search_dir / name
-        if skill_dir.exists() and skill_dir.is_dir():
-            resolved = skill_dir.resolve()
-            # Ensure resolved path is still under the search directory
-            if str(resolved).startswith(str(search_dir.resolve()) + os.sep):
-                return str(resolved)
+        if not (skill_dir.exists() and skill_dir.is_dir()):
+            continue
+        resolved = skill_dir.resolve()
+        # Ensure resolved path is still under the search directory
+        if not str(resolved).startswith(str(search_dir.resolve()) + os.sep):
+            continue
+
+        # Standard case: SKILL.md at root
+        if (resolved / "SKILL.md").exists():
+            return str(resolved)
+
+        # Monorepo case: look for subdirectory with SKILL.md
+        # Prefer subdirectory matching the skill name
+        skill_subdirs = []
+        for subentry in sorted(resolved.iterdir()):
+            if subentry.is_dir() and (subentry / "SKILL.md").exists():
+                sub_resolved = subentry.resolve()
+                if str(sub_resolved).startswith(str(resolved) + os.sep):
+                    if subentry.name == name:
+                        return str(sub_resolved)
+                    skill_subdirs.append(str(sub_resolved))
+
+        # No exact name match — return first subdirectory with SKILL.md
+        if skill_subdirs:
+            return skill_subdirs[0]
 
     return None
 
