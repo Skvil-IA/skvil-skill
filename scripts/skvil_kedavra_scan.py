@@ -3,7 +3,6 @@
 
 import os
 import sys
-import traceback
 from pathlib import Path
 
 # Add parent directory to path so lib can be imported
@@ -14,6 +13,7 @@ from lib.collector import collect_skill, discover_skills
 from lib.formatter import format_scan_output, format_skill_result, to_json
 from lib.hasher import composite_hash, hash_directory, skvil_kedavra_self_hash
 from lib.patterns import scan_binary_presence, scan_oversized_files, scan_skill
+from lib.updater import auto_update
 
 # Resolve the actual installation directory of the running skvil-kedavra instance.
 # Used to exclude ourselves by resolved path — NOT by directory name.
@@ -51,14 +51,12 @@ def scan_all():
         return
 
     config = load_config()
-    backend_successes = 0
-    backend_failures = 0
+    mode = "connected" if config["api_key"] else "local"
 
     results = []
     for entry in skill_entries:
         skill_dir = entry["path"]
         source = entry["source"]
-        has_skill_md = entry.get("has_skill_md", True)
         try:
             # Collect metadata and code
             skill_data = collect_skill(skill_dir)
@@ -73,22 +71,6 @@ def scan_all():
                 + scan_binary_presence(skill_data["files"])
                 + scan_oversized_files(skill_data["oversized_code_files"])
             )
-
-            # Flag skills without SKILL.md discovered via code files (H1 fix)
-            if not has_skill_md:
-                findings.insert(
-                    0,
-                    {
-                        "severity": "high",
-                        "category": "metadata",
-                        "description": (
-                            "No SKILL.md found — skill directory contains code files "
-                            "but does not follow Agent Skills standard (potentially evasive)"
-                        ),
-                        "file": "SKILL.md",
-                        "line": 0,
-                    },
-                )
 
             # Format result
             result = format_skill_result(
@@ -108,13 +90,14 @@ def scan_all():
             reputation = post_scan(result, config, skill_url=skill_url)
             if reputation:
                 merge_reputation(result, reputation)
-                backend_successes += 1
             elif config["api_key"]:
-                backend_failures += 1
+                mode = "local"  # backend unreachable
 
             results.append(result)
 
         except Exception as e:
+            import traceback
+
             traceback.print_exc(file=sys.stderr)
             results.append(
                 {
@@ -124,28 +107,9 @@ def scan_all():
                     "score": 0,
                     "risk_level": "danger",
                     "error": str(e),
-                    # Synthetic finding so "danger" is explained (M9 fix)
-                    "findings": [
-                        {
-                            "severity": "critical",
-                            "category": "scan_error",
-                            "description": f"Scan failed: {e}",
-                            "file": "",
-                            "line": 0,
-                        }
-                    ],
+                    "findings": [],
                 }
             )
-
-    # Determine mode based on actual backend interaction results (M7 fix):
-    # "connected" if all backend calls succeeded, "local" if none had a key,
-    # report actual counts so the agent knows partial connectivity.
-    if not config["api_key"]:
-        mode = "local"
-    elif backend_failures == 0:
-        mode = "connected"
-    else:
-        mode = "local"
 
     output = format_scan_output(results)
     output["mode"] = mode
@@ -178,4 +142,5 @@ def scan_all():
 
 
 if __name__ == "__main__":
+    auto_update(_SELF_DIR)
     scan_all()

@@ -11,10 +11,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from lib.client import get_verify, load_config, merge_reputation, merge_verify, post_scan
-from lib.collector import collect_skill, is_contained
+from lib.collector import collect_skill
 from lib.formatter import format_skill_result, to_json
 from lib.hasher import composite_hash, hash_directory, skvil_kedavra_self_hash
 from lib.patterns import scan_binary_presence, scan_oversized_files, scan_skill
+from lib.updater import auto_update
 
 _SKVIL_KEDAVRA_DIR = str(Path(os.path.abspath(__file__)).parent.parent.resolve())
 
@@ -24,7 +25,6 @@ def find_skill(name: str) -> str:
 
     Validates that the resolved path stays within a skills directory
     to prevent path traversal attacks.
-    Uses is_contained() for cross-platform containment check (M3 fix).
     """
     search_dirs = [
         Path.home() / ".openclaw" / "skills",
@@ -36,8 +36,10 @@ def find_skill(name: str) -> str:
             continue
         skill_dir = search_dir / name
         if skill_dir.exists() and skill_dir.is_dir():
-            if is_contained(skill_dir, search_dir):
-                return str(skill_dir.resolve())
+            resolved = skill_dir.resolve()
+            # Ensure resolved path is still under the search directory
+            if str(resolved).startswith(str(search_dir.resolve()) + os.sep):
+                return str(resolved)
 
     return None
 
@@ -123,6 +125,8 @@ def verify_skill(name: str):
 
 
 def main():
+    auto_update(_SKVIL_KEDAVRA_DIR)
+
     if len(sys.argv) < 2:
         print(
             to_json(

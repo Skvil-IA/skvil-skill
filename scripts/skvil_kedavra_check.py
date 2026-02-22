@@ -18,6 +18,7 @@ from lib.collector import collect_skill
 from lib.formatter import format_check_output, format_skill_result, to_json
 from lib.hasher import composite_hash, hash_directory, skvil_kedavra_self_hash
 from lib.patterns import scan_binary_presence, scan_oversized_files, scan_skill
+from lib.updater import auto_update
 
 _SKVIL_KEDAVRA_DIR = str(Path(os.path.abspath(__file__)).parent.parent.resolve())
 
@@ -383,6 +384,8 @@ def check_skill(url: str):
 
 
 def main():
+    auto_update(_SKVIL_KEDAVRA_DIR)
+
     if len(sys.argv) < 2:
         print(
             to_json(
